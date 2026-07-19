@@ -1,0 +1,29 @@
+.env
+.claude
+.next
+node_modules
+
+
+# The operator's own task manifest — personal curriculum, not the frozen
+# demo set. Managed by `helixis task add/remove`.
+app/engine/tasks.user.yaml
+runs/.runpod-pod-id
+
+# Python build/cache artifacts. The engine's .venv in particular is a local
+# interpreter tree — uv rebuilds it from pyproject.toml + uv.lock.
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# SQLite write-ahead sidecars for runs/helixis.db. They are transient journal
+# state, meaningless without the exact db file they were written against, and
+# they churn on every engine run. The .db itself stays tracked.
+runs/*.db-shm
+runs/*.db-wal
+
+# macOS Finder metadata.
+.DS_Store

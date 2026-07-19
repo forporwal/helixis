@@ -1,0 +1,60 @@
+# Helixis 30-task manifest — frozen for the experiment (Requirement 1.1).
+#
+# 20 train / 10 held-out across three AutomationBench domains (sales, support,
+# finance). Train and held-out are drawn from the same domains so that held-out
+# gains measure skill transfer to unseen *tasks*, not merely unseen domains.
+#
+# Task ids are verified against AutomationBench's domain modules. Selection
+# favors multi-step tasks (lookup -> act -> verify), which is the band where
+# distilled procedural skills can plausibly move the score; trivially-passing and
+# hopeless tasks would both flatten the curve.
+#
+# Re-tune after the Phase-0 probe: replace any task scoring ~0.0 or ~1.0 in the
+# baseline with another from the same domain, then re-freeze. Do not edit between
+# epochs of a live experiment — the manifest must be constant for the curve to
+# mean anything.
+
+train:
+  # --- sales (7) ---
+  - { id: sales.qualify_lead,                    domain: sales }
+  - { id: sales.create_new_opportunity,          domain: sales }
+  - { id: sales.advance_opportunity_stage,       domain: sales }
+  - { id: sales.champion_change_alert,           domain: sales }
+  - { id: sales.contract_renewal_coordinator,    domain: sales }
+  - { id: sales.cross_reference_validation,      domain: sales }
+  - { id: sales.meeting_action_items,            domain: sales }
+
+  # --- support (7) ---
+  - { id: support.freshdesk_sla_monitoring,      domain: support }
+  - { id: support.freshdesk_multi_queue_routing, domain: support }
+  - { id: support.helpscout_jira_bugs,           domain: support }
+  - { id: support.helpscout_daily_digest,        domain: support }
+  - { id: support.gorgias_refund_processing,     domain: support }
+  - { id: support.gorgias_order_lookup,          domain: support }
+  - { id: support.intercom_sentiment_escalation, domain: support }
+
+  # --- finance (6) ---
+  - { id: finance.ap_aging_report,               domain: finance }
+  - { id: finance.duplicate_payment_detection,   domain: finance }
+  - { id: finance.expense_policy_violation,      domain: finance }
+  - { id: finance.invoice_aging_followup,        domain: finance }
+  - { id: finance.credit_card_reconciliation,    domain: finance }
+  - { id: finance.expense_split_allocation,      domain: finance }
+
+heldout:
+  # Never fed to the distiller. These measure generalization (Requirement 1.4).
+  # --- sales (4) ---
+  - { id: sales.create_contact_for_account,      domain: sales }
+  - { id: sales.deal_escalation,                 domain: sales }
+  - { id: sales.event_followup_outreach,         domain: sales }
+  - { id: sales.cold_email_personalization,      domain: sales }
+
+  # --- support (3) ---
+  - { id: support.freshdesk_escalation_matrix,   domain: support }
+  - { id: support.helpscout_auto_categorization, domain: support }
+  - { id: support.zendesk_customer_360,          domain: support }
+
+  # --- finance (3) ---
+  - { id: finance.expense_anomaly_detection,     domain: finance }
+  - { id: finance.budget_variance_analysis,      domain: finance }
+  - { id: finance.vendor_statement_reconciliation, domain: finance }

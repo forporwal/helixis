@@ -1,0 +1,263 @@
+@import "tailwindcss";
+
+/* next-themes toggles the `dark` class on <html>; make the dark: variant
+   follow that class rather than prefers-color-scheme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Helixis dashboard design tokens.
+ *
+ * Two themes, one indigo. The light theme is the default and follows the
+ * soft SaaS-dashboard look (white cards on a faint blue-gray canvas, a
+ * lavender-gray sidebar, indigo #5e6ad2 as the single chromatic accent).
+ * The dark theme keeps the previous Linear-derived palette (near-black
+ * canvas, four-step surface ladder, hairline borders). Both themes share
+ * the same semantic variable names, so components never branch on theme —
+ * next-themes toggles the `dark` class on <html> and the variables flip.
+ */
+
+:root {
+  color-scheme: light;
+
+  --canvas: #f7f8fb;
+  --surface-1: #ffffff;
+  --surface-2: #f4f5fa;
+  --surface-3: #eef0f7;
+  --surface-4: #e9ebf5;
+  --sidebar: #f1f2f7;
+  --hairline-1: #e8eaf2;
+  --hairline-2: #d8dbe8;
+  --hairline-3: #c5c9dc;
+
+  --primary: #5e6ad2;
+  --primary-hover: #4c58c4;
+  --primary-focus: #5e69d1;
+  --on-primary: #ffffff;
+
+  --ink-1: #1f2547;
+  --ink-2: #465073;
+  --ink-3: #8a90a9;
+  --ink-4: #b3b7cb;
+
+  --success: #1f9d44;
+  --overlay: rgba(15, 17, 40, 0.35);
+
+  /* ---- semantic aliases consumed by components ---- */
+  --surface-page: var(--canvas);
+  --surface-sunken: var(--surface-2); /* hover / selected fill */
+  --text-primary: var(--ink-1);
+  --text-secondary: var(--ink-2);
+  --text-muted: var(--ink-3);
+  --gridline: var(--hairline-1);
+  --axis: var(--hairline-2);
+  --border: var(--hairline-1);
+  --border-strong: var(--hairline-2);
+
+  /* categorical series -- identity, fixed order, never cycled. */
+  --series-train: #5e6ad2;
+  --series-heldout: #1f9d44;
+
+  /* sequential ramp (single indigo hue, pale -> saturated on light) for
+     partial-credit magnitude */
+  --seq-100: #e4e7fb;
+  --seq-250: #bcc3f4;
+  --seq-400: #8f99e9;
+  --seq-550: #5e6ad2;
+  --seq-700: #3d47ae;
+
+  /* status -- in-product severity palette; never reused as a series color */
+  --status-good: #1f9d44;
+  --status-warning: #c28f1e;
+  --status-serious: #d97a2e;
+  --status-critical: #e5484d;
+  --delta-good: #1f9d44;
+
+  /* Soft diffuse card shadow — the light theme carries depth with shadow,
+     the dark theme with surface lift + a top-edge highlight. */
+  --shadow-card: 0 1px 2px rgba(31, 37, 71, 0.04), 0 6px 20px rgba(31, 37, 71, 0.06);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --canvas: #010102;
+  --surface-1: #0f1011;
+  --surface-2: #141516;
+  --surface-3: #18191a;
+  --surface-4: #191a1b;
+  --sidebar: #0f1011;
+  --hairline-1: #23252a;
+  --hairline-2: #34343a;
+  --hairline-3: #3e3e44;
+
+  --primary: #5e6ad2;
+  --primary-hover: #828fff;
+  --primary-focus: #5e69d1;
+  --on-primary: #ffffff;
+
+  --ink-1: #f7f8f8;
+  --ink-2: #d0d6e0;
+  --ink-3: #8a8f98;
+  --ink-4: #62666d;
+
+  --success: #27a644;
+  --overlay: rgba(0, 0, 0, 0.6);
+
+  --series-train: #828fff;
+  --series-heldout: #27a644;
+
+  /* dim -> bright on dark */
+  --seq-100: #23264d;
+  --seq-250: #383f8a;
+  --seq-400: #5e6ad2;
+  --seq-550: #828fff;
+  --seq-700: #b8c0ff;
+
+  --status-good: #27a644;
+  --status-warning: #d4a72c;
+  --status-serious: #e0823d;
+  --status-critical: #e5484d;
+  --delta-good: #4cc26a;
+
+  --shadow-card: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-sidebar: var(--sidebar);
+  --color-page: var(--surface-page);
+  --color-sunken: var(--surface-sunken);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-focus: var(--primary-focus);
+  --color-on-primary: var(--on-primary);
+
+  --color-ink: var(--text-primary);
+  --color-ink-secondary: var(--text-secondary);
+  --color-ink-muted: var(--text-muted);
+  --color-ink-tertiary: var(--ink-4);
+  --color-gridline: var(--gridline);
+  --color-axis: var(--axis);
+  --color-hairline: var(--border);
+  --color-hairline-strong: var(--border-strong);
+  --color-hairline-tertiary: var(--hairline-3);
+
+  --color-train: var(--series-train);
+  --color-heldout: var(--series-heldout);
+
+  --color-good: var(--status-good);
+  --color-warning: var(--status-warning);
+  --color-serious: var(--status-serious);
+  --color-critical: var(--status-critical);
+  --color-delta-good: var(--delta-good);
+
+  --font-sans: var(--font-poppins), -apple-system, BlinkMacSystemFont,
+    system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /*
+   * Sharpened radius scale.
+   *
+   * Overriding Tailwind's own radius tokens rather than editing every call
+   * site: `rounded-lg` / `rounded-2xl` keep their names and relative order,
+   * they just resolve to tighter values. Cards land at 6px instead of 16px,
+   * which is what reads as "engineered" rather than "consumer app".
+   * `rounded-full` is untouched — dots, avatars, and meters still need it.
+   */
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 5px;
+  --radius-2xl: 6px;
+  --radius-3xl: 8px;
+}
+
+body {
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary-focus) 50%, transparent);
+  outline-offset: 1px;
+}
+
+/*
+ * Pointer affordance.
+ *
+ * Tailwind's preflight resets buttons to `cursor: default`, so every button,
+ * chip, tab, and toggle in the app looked inert on hover while links did not.
+ * Restore the hand for anything that acts like a control, and keep the
+ * not-allowed cursor honest on disabled ones.
+ */
+button:not(:disabled),
+summary,
+label[for],
+[role="button"]:not([aria-disabled="true"]),
+[role="tab"],
+[role="option"],
+[role="menuitem"],
+[role="menuitemradio"],
+[role="menuitemcheckbox"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* Primary CTA: indigo, tight corners (never pill), 14px/500 label. */
+.btn-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: var(--radius-xl);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  transition: background-color 120ms ease-out;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.btn-primary:active:not(:disabled) {
+  background: var(--primary-focus);
+}
+
+/* Refetch must never flash a skeleton -- hold the previous render, dimmed. */
+.is-refetching {
+  opacity: 0.6;
+  transition: opacity 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes helixis-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pulse-live {
+  animation: helixis-pulse 1.8s ease-in-out infinite;
+}

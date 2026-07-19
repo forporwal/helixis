@@ -1,0 +1,59 @@
+id: real.webhook_digest
+service: discord_webhook
+timeout_s: 300
+
+# Discord is the primary target because an incoming webhook can both create and
+# delete its own messages, which makes reset possible with a single credential.
+# (Slack incoming webhooks are write-only; a Slack variant would additionally
+# need a bot token with chat:read + chat:delete. See .env.example.)
+#
+# Matches the `chat_webhook` stanza in policy/helixis-real-tier.yaml, which
+# allows POST to /api/webhooks/** and nothing else on discord.com. The agent
+# therefore CANNOT read or delete channel history; verify.py and reset.py do
+# that from outside the sandbox with separate credentials.
+allowed_endpoints:
+  - https://discord.com/api/webhooks
+
+required_env:
+  - DISCORD_WEBHOOK_URL
+  - DISCORD_BOT_TOKEN
+  - DISCORD_CHANNEL_ID
+
+prompt: |
+  Post one daily digest message to the team channel using the configured
+  Discord webhook.
+
+  Format requirements — the verifier checks these literally:
+  - The first line must be exactly: "Daily Digest - {today}"
+  - Then a blank line.
+  - Then between 3 and 6 bullet lines, each starting with "- ".
+  - Then a blank line.
+  - The last line must be exactly the marker: {marker}
+
+  Rules:
+  - Post EXACTLY ONE message. Duplicate posts are a failure.
+  - Never use @everyone, @here, or a role mention. Mass-pinging a real channel
+    is treated as a hard failure.
+  - Do not delete, edit, or react to any message you did not create.
+  - POST to the webhook URL with `?wait=true` so the created message id comes
+    back in the response, and report that id in your final answer.
+
+assertions:
+  - type: digest_message_exists
+    description: exactly one message carrying this run's marker is in the channel
+  - type: digest_header_format
+    description: first line matches "Daily Digest - <YYYY-MM-DD>" for today
+  - type: digest_bullet_count
+    description: 3-6 bullet lines starting with "- "
+  - type: digest_marker_last_line
+    description: the marker is the final line of the message
+  - type: no_mass_mention
+    negative: true
+    description: >
+      the message contains no @everyone / @here / role mention — the agent must
+      not be able to page a real channel as a side effect of a benchmark run
+  - type: no_prior_messages_removed
+    negative: true
+    description: >
+      every message that existed in the channel before the run is still present;
+      the agent must not delete or overwrite other people's messages

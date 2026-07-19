@@ -1,0 +1,516 @@
+# Helixis local stack.
+#
+#   docker compose up dashboard              dashboard only, reads existing runs/
+#   docker compose run --rm engine run       full experiment
+#   docker compose --profile gpu up vllm     local vLLM (needs an NVIDIA GPU)
+#
+# The vLLM tier normally runs on RunPod rather than here — set
+# HELIXIS_DISTILLER_BASE_URL to the pod's /v1 endpoint and skip the gpu profile.
+# The local service exists so the distiller path can be exercised on a GPU box
+# without a pod, and so the compose file documents the exact serving args.
+
+name: helixis
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: docker/engine.Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Inside the network, the sibling service is reachable by name; on the
+      # host it is localhost. Override in .env when pointing at RunPod.
+      HELIXIS_DISTILLER_BASE_URL: ${HELIXIS_DISTILLER_BASE_URL:-http://vllm:8000/v1}
+      HELIXIS_AGENT_BASE_URL: ${HELIXIS_AGENT_BASE_URL:-fake://offline}
+      AUTOMATIONBENCH_STRICT_ASSERTIONS: "0"
+      # Same gateway the dashboard drives, so `helixis tail-policy` and the
+      # policy/sandbox calls in containment.py address one control plane.
+      OPENSHELL_GATEWAY_ENDPOINT: ${OPENSHELL_GATEWAY_ENDPOINT:-http://openshell:8080}
+    volumes:
+      # State lives on the host so a container restart never costs an epoch.
+      - ./runs:/app/runs
+      - ./wiki:/app/wiki
+      - ./policy:/app/policy
+    entrypoint: ["helixis"]
+    command: ["report"]
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/dashboard.Dockerfile
+    ports:
+      - "${HELIXIS_DASHBOARD_PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HELIXIS_DB: /app/runs/helixis.db
+      HELIXIS_WIKI: /app/wiki
+      # The two above are read by the NODE app (app/web/lib/paths.ts). The
+      # engine CLI this container now spawns reads DIFFERENT names — see
+      # helixis/config.py: HELIXIS_RUNS_DIR and HELIXIS_WIKI_DIR. Without them
+      # the CLI falls back to ROOT/runs and ROOT/wiki, i.e. /opt/engine/runs,
+      # and would happily write a SECOND, empty database inside the image while
+      # the dashboard kept reading the real one — the two views disagreeing with
+      # no error anywhere.
+      HELIXIS_RUNS_DIR: /app/runs
+      HELIXIS_WIKI_DIR: /app/wiki
+      NODE_ENV: production
+      # Dashboard sign-in. Sign-in fails closed if the email/password pair is
+      # unset; AUTH_SECRET signs the session JWTs (openssl rand -base64 32).
+      AUTH_SECRET: ${HELIXIS_DASHBOARD_AUTH_SECRET:-}
+      AUTH_TRUST_HOST: "true"
+      # Canonical base URL for auth redirects. AUTH_TRUST_HOST alone is NOT
+      # enough behind a reverse proxy: measured on this stack, next-auth honours
+      # X-Forwarded-Proto but still resolves the HOST to localhost:3000, so
+      # signing in at https://helixis.cc 302s to `https://localhost:3000` and
+      # the browser lands nowhere. Reproduced with Host and X-Forwarded-Host
+      # both set correctly and Caddy bypassed entirely, so it is not a proxy
+      # misconfiguration — the fallback simply wins.
+      #
+      # Defaults to the loopback URL, which is right for a laptop and for a
+      # tunnelled VPS. deploy/deploy.sh overwrites it with https://<fqdn> when
+      # deploying with --public.
+      AUTH_URL: ${HELIXIS_AUTH_URL:-http://localhost:${HELIXIS_DASHBOARD_PORT:-3000}}
+      # Widens the SESSION cookie to `.<domain>` so the Control UI and TUI
+      # subdomains send it, which is what lets Caddy's forward_auth probe
+      # (/api/auth/verify) recognise a signed-in operator. Empty on a laptop,
+      # where everything shares one origin. See auth.ts for why only the
+      # session cookie is widened and never the `__Host-` CSRF cookie.
+      AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-}
+      HELIXIS_AUTH_EMAIL: ${HELIXIS_AUTH_EMAIL:-}
+      HELIXIS_AUTH_PASSWORD: ${HELIXIS_AUTH_PASSWORD:-}
+      # Where the *server* reaches the gateway to probe reachability for home's
+      # launch card. Deliberately not the browser's URL: probing localhost from
+      # this container would report every healthy gateway as down. No token is
+      # ever sent — the probe hits the origin only.
+      #
+      # Now `claw-forward:18789` rather than the retired `nemoclaw:18789`. The
+      # agent lives in a driver-created sandbox that publishes no ports, so the
+      # forwarder sidecar is the only address the Control UI answers on from
+      # inside the compose network. This also makes the probe honest about what
+      # the user can actually reach: if the tunnel is down the UI genuinely is
+      # unreachable, even when the agent behind it is healthy.
+      NEMOCLAW_GATEWAY_URL: ${NEMOCLAW_GATEWAY_URL:-http://claw-forward:18789}
+      # The token the launch cards put in the Control UI's URL fragment. MUST
+      # carry the same default as claw-init below, because claw-init bakes it
+      # into the sandbox at create time and the two are compared for equality:
+      # if they drift, the Control UI answers "unauthorized: gateway token
+      # mismatch" on a stack that is otherwise entirely healthy.
+      #
+      # Read at REQUEST time by app/web/lib/claw.ts, not baked into the bundle.
+      # It was briefly a NEXT_PUBLIC_ build-time value, which could never work —
+      # the token is generated per install, long after the image is built.
+      NEMOCLAW_GATEWAY_TOKEN: ${NEMOCLAW_GATEWAY_TOKEN:-helixis-local}
+      # Host-side ports the browser uses, so the cards stay correct when the
+      # claw-forward publish ports below are remapped.
+      NEMOCLAW_UI_PORT: ${NEMOCLAW_UI_PORT:-18789}
+      NEMOCLAW_TUI_PORT: ${NEMOCLAW_TUI_PORT:-18790}
+      # Absolute launch-card URLs, overriding the localhost:<port> that
+      # app/web/lib/claw.ts builds from the ports above.
+      #
+      # Leave EMPTY for a laptop or a tunnelled VPS: `localhost:18789` is then
+      # correct, because `make tunnel` forwards exactly those ports. Set these
+      # only if the Control UI and TUI are actually reachable at a public
+      # address — which by default they are NOT, since compose binds both to
+      # 127.0.0.1 and only the dashboard is proxied by Caddy. Pointing them at a
+      # hostname that nothing serves converts a working tunnel link into a dead
+      # one, so an unset value is the safer default.
+      NEMOCLAW_UI_URL: ${NEMOCLAW_UI_URL:-}
+      NEMOCLAW_TUI_URL: ${NEMOCLAW_TUI_URL:-}
+      # Which OpenShell gateway the bundled `openshell` CLI drives when the
+      # dashboard approves or rejects a policy proposal. Setting the endpoint
+      # directly skips gateway registration entirely — no `openshell gateway
+      # add`, no writable config dir, no browser auth flow, none of which a
+      # headless container can do. An http:// endpoint is treated as plaintext,
+      # which is why the gateway runs with allow_unauthenticated_users.
+      OPENSHELL_GATEWAY_ENDPOINT: ${OPENSHELL_GATEWAY_ENDPOINT:-http://openshell:8080}
+      # Sandbox the proposals route names in its `openshell rule` calls.
+      HELIXIS_SANDBOX: ${HELIXIS_SANDBOX:-helixis}
+    depends_on:
+      - openshell
+    volumes:
+      # READ-WRITE, and this reverses an earlier decision, so the reasoning
+      # matters.
+      #
+      # These were `:ro` on the premise that "control actions shell out to the
+      # engine rather than writing the DB". That premise does not survive
+      # containerisation: `shell out to the engine` means this container runs
+      # `helixis epoch|run|distill` ITSELF (app/web/lib/runner.ts spawns it), and
+      # those commands write episodes, trajectories, the SQLite DB and the wiki.
+      # It only ever worked in local dev because `pnpm start` runs on the host,
+      # outside these mounts.
+      #
+      # Read-only here does not make the deployment safer, it makes /lab a
+      # decoration: preflight reports fine and every Start button fails on
+      # EROFS. The honest options were "the dashboard can run the engine" or
+      # "the dashboard cannot"; this is the former.
+      #
+      # It is not a new credential exposure — env_file already gives this
+      # container the whole .env, including HELIXIS_AGENT_API_KEY.
+      - ./runs:/app/runs
+      - ./wiki:/app/wiki
+
+  openshell-certs:
+    # One-shot: generates the gateway's sandbox-JWT bundle before the gateway
+    # starts. NOT optional — the Docker driver refuses to create any sandbox
+    # without [openshell.gateway.gateway_jwt], and the gateway only ever READS
+    # that material; nothing generates it on demand. Upstream's reference script
+    # (tasks/scripts/gateway-docker.sh) runs `generate-certs` the same way before
+    # launching the gateway.
+    #
+    # Idempotent by the tool's own design, not by a wrapper: in filesystem mode
+    # generate-certs skips when the full bundle is present and preserves existing
+    # JWT signing material (certgen.rs `LocalAction::Skip`). That matters —
+    # rotating the signing key would invalidate the JWT every live sandbox holds,
+    # surfacing as sandboxes wedged in Provisioning rather than as an auth error.
+    #
+    # The binary is invoked directly because the gateway image is DISTROLESS: it
+    # has no /bin/sh, so a shell-script entrypoint fails with
+    # `exec: "/bin/sh": stat /bin/sh: no such file or directory`.
+    image: ghcr.io/nvidia/openshell/gateway@sha256:e21f520a0678ba3cfe749957338b5fa78c75e8e52de13e4559ccbb582f781a0b
+    entrypoint: ["/usr/local/bin/openshell-gateway"]
+    command:
+      - generate-certs
+      - --output-dir=/var/lib/openshell/tls
+      # SANs must cover how the gateway is reached: loopback from the host, and
+      # host.openshell.internal from inside sandbox containers calling back.
+      - --server-san=127.0.0.1
+      - --server-san=localhost
+      - --server-san=host.openshell.internal
+    user: "0"
+    volumes:
+      - type: bind
+        source: /var/lib/openshell
+        target: /var/lib/openshell
+        bind:
+          create_host_path: true
+    restart: "no"
+
+  openshell:
+    # The containment control plane. Without it the dashboard's approve/reject
+    # buttons had nothing to talk to: policy events reached the DB only through
+    # `helixis tail-policy` scraping logs, so the boundary was observable but
+    # not operable from the UI.
+    #
+    # Pinned to 0.0.86, by digest, matching the CLI version installed in the
+    # engine and dashboard images. Matching them is load-bearing: `openshell
+    # rule approve|reject`, which /api/proposals shells out to, is a hidden
+    # (unlisted) command whose flags carry no stability guarantee.
+    #
+    # NOTE — this is why the pin is 0.0.86 and not the 0.0.85 the spec docs and
+    # the NemoClaw blueprint name: GHCR publishes gateway images only as
+    # `latest`, `dev`, and commit SHAs, and the v0.0.85 release commit was never
+    # published as a tag. 0.0.86 is the newest release with a gateway image, so
+    # it is the newest version the CLI can be matched to. (The blueprint's 0.0.85
+    # pin refers to the NemoClaw sandbox image, which is unaffected.)
+    # To move this pin: docker pull ghcr.io/nvidia/openshell/gateway:latest,
+    # read its `--version`, then bump the digest here and OPENSHELL_VERSION in
+    # both Dockerfiles together.
+    image: ghcr.io/nvidia/openshell/gateway@sha256:e21f520a0678ba3cfe749957338b5fa78c75e8e52de13e4559ccbb582f781a0b
+    depends_on:
+      openshell-certs:
+        condition: service_completed_successfully
+    # Clear the image's default CMD so the mounted TOML owns every setting —
+    # CLI flags beat the file in the merge order, and the image's default CMD
+    # passes --bind-address explicitly.
+    command: []
+    # Docker-outside-of-Docker: the gateway creates sibling containers on the
+    # host's daemon rather than nesting one. Needs the socket, NOT --privileged.
+    # UID 0 is required to write the extracted supervisor binary and to open the
+    # socket; the image is distroless, so the numeric UID is the only way to say
+    # it. Appropriate for this single-operator local stack, not for a shared host.
+    user: "0"
+    ports:
+      # Must be published as 8080:8080 and not remapped — the Docker driver
+      # hands sandbox containers host.openshell.internal:8080 as their callback
+      # address, and a remapped host port leaves every new sandbox stuck in
+      # Provisioning.
+      #
+      # For the operator and the sibling containers (CLI, dashboard, engine).
+      - "127.0.0.1:${OPENSHELL_PORT:-8080}:8080"
+      - "127.0.0.1:${OPENSHELL_HEALTH_PORT:-8081}:8081"
+      # For SANDBOXES, and required on Linux. The driver resolves
+      # host.openshell.internal to the openshell-docker bridge gateway IP and
+      # expects the gateway to be listening there; with only the loopback
+      # publish above, every sandbox dies with "Policy fetch failed after 5
+      # attempts". Docker Desktop does not need this — on macOS the driver picks
+      # the `host-gateway` route instead (lib.rs:2464) — but the binding is
+      # harmless there, so it stays unconditional rather than platform-forked.
+      #
+      # THIS IS NOT A PUBLIC EXPOSURE. 172.19.0.1 is an RFC1918 address on a
+      # local Docker bridge: reachable from the host and from containers on that
+      # bridge, and not routable from off-host. `docker-proxy` binds this exact
+      # address, not 0.0.0.0. deploy/verify-exposure.sh knows the difference and
+      # still fails the deploy if 8080 ever appears on 0.0.0.0 or a public IP.
+      - "${OPENSHELL_BRIDGE_IP:-172.19.0.1}:${OPENSHELL_PORT:-8080}:8080"
+    extra_hosts:
+      # Docker Desktop resolves these automatically; Linux does not, and without
+      # them sandbox containers cannot call the gateway back.
+      - "host.docker.internal:host-gateway"
+      - "host.openshell.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same absolute path on both sides, deliberately: the gateway passes paths
+      # written here to the host's Docker daemon as bind-mount sources when it
+      # creates sandboxes, and the daemon resolves them against the HOST fs. A
+      # named volume cannot satisfy that.
+      - type: bind
+        source: /var/lib/openshell
+        target: /var/lib/openshell
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./docker/openshell-gateway.toml
+        target: /etc/openshell/gateway.toml
+        read_only: true
+    networks:
+      # `default` keeps the name `openshell` resolvable for the dashboard,
+      # engine and claw-init, exactly as before.
+      default:
+      # ALSO join the network the driver puts sandboxes on, under a stable
+      # alias. This is what makes the sandbox's policy fetch work on Linux.
+      #
+      # WHY (measured on this stack, and it is a genuine macOS/Linux split):
+      # a sandbox fetches its policy from `grpc_endpoint`, which upstream sets
+      # to host.openshell.internal:8080. Inside the sandbox that name resolves
+      # to the openshell-docker bridge gateway — i.e. the HOST — but this
+      # service publishes 8080 as `127.0.0.1:8080`, so it listens only on the
+      # host's loopback interface. The bridge IP is a different interface, so
+      # the connect is REFUSED and the sandbox crash-loops with "Policy fetch
+      # failed after 5 attempts", which reads like a gateway fault rather than
+      # a routing one.
+      #
+      # It works on Docker Desktop only because macOS routes
+      # host.docker.internal through the VM's port forwarder, which does see
+      # loopback-published ports. Linux has no such indirection.
+      #
+      # Putting the gateway ON the sandbox network sidesteps the host entirely:
+      # container-to-container over a user-defined bridge, resolved by Docker's
+      # embedded DNS. It publishes nothing new — 8080 stays loopback-only on
+      # the host — so the containment posture is unchanged. Sandboxes already
+      # must reach the gateway; this is the path they take.
+      openshell-sandboxes:
+        aliases:
+          - openshell-gateway
+    environment:
+      OPENSHELL_GATEWAY_CONFIG: /etc/openshell/gateway.toml
+      # Cannot live in the TOML — OpenShell blocks it there so credential-bearing
+      # DSNs can't be committed. A plain SQLite path carries no credentials.
+      OPENSHELL_DB_URL: "sqlite:/var/lib/openshell/gateway.db?mode=rwc"
+      # OS-level path vars, outside the gateway config schema. They put the
+      # extracted supervisor binary inside the bind mount, where the host daemon
+      # can resolve its path.
+      XDG_DATA_HOME: /var/lib/openshell
+      HOME: /var/lib/openshell
+    restart: unless-stopped
+
+  # Helixis Claw is no longer a compose service. It is an OpenShell SANDBOX,
+  # created by the gateway, and the two services below are what provision it and
+  # keep its front door reachable.
+  #
+  # WHY THE SERVICE HAD TO GO (spec 06). `nemoclaw` ran `openclaw gateway run`
+  # in a plain container beside the gateway. `openshell sandbox list` reported
+  # "No sandboxes found", `docker inspect` showed SecurityOpt=[] and CapAdd=[],
+  # and there was no L7 proxy in its egress path — so every containment claim in
+  # the docs described a boundary that nothing enforced. Policy events reached
+  # the dashboard only because `helixis tail-policy` scraped logs after the
+  # fact, and `openshell rule approve` from the dashboard failed with "sandbox
+  # not found" because the sandbox genuinely did not exist.
+  #
+  # The image itself is unchanged (docker/nemoclaw.Dockerfile, the pinned
+  # blueprint digest plus ttyd); what changed is who launches it.
+
+  claw-init:
+    # One-shot provisioner: registers the provider, creates the sandbox with its
+    # policy and mounts, and starts the agent inside it. Exits when done.
+    #
+    # Reuses neither the dashboard image (no ssh, and no reason to give a
+    # password-protected web surface one) nor the engine image; see
+    # docker/openshell-cli.Dockerfile.
+    build:
+      context: .
+      dockerfile: docker/openshell-cli.Dockerfile
+    image: helixis-openshell-cli
+    command: ["/usr/local/bin/claw-init.sh"]
+    depends_on:
+      - openshell
+      - claw-sync
+    environment:
+      OPENSHELL_GATEWAY_ENDPOINT: ${OPENSHELL_GATEWAY_ENDPOINT:-http://openshell:8080}
+      HELIXIS_SANDBOX: ${HELIXIS_SANDBOX:-helixis}
+      HELIXIS_SANDBOX_IMAGE: ${HELIXIS_SANDBOX_IMAGE:-helixis-nemoclaw:latest}
+      # Absolute HOST path of this repo. Required, not defaulted: sandbox bind
+      # mount sources must be absolute and must already exist, and they are
+      # resolved by the host's Docker daemon rather than by this container, so a
+      # container-relative path silently mounts the wrong thing (or nothing).
+      HELIXIS_ROOT: ${HELIXIS_ROOT:-${PWD}}
+      NEMOCLAW_GATEWAY_TOKEN: ${NEMOCLAW_GATEWAY_TOKEN:-helixis-local}
+      # Extra browser origin the Control UI will accept, baked into the sandbox
+      # at create time and read by claw-start.sh. Empty for a laptop or a
+      # tunnelled host (localhost:18789 is already allowed); set to the public
+      # origin when the UI is served from its own hostname, or the UI answers
+      # "origin not allowed". Derived from NEMOCLAW_UI_URL so the launch card
+      # and the allowlist cannot disagree.
+      NEMOCLAW_UI_ORIGIN: ${NEMOCLAW_UI_URL:-}
+      # The one real credential this service holds, and it never leaves it: it
+      # is handed to the GATEWAY's credential store, and the sandbox receives a
+      # placeholder that the L7 proxy substitutes at egress (Req 3.1-3.2).
+      # This is why the sandbox itself has no HELIXIS_AGENT_API_KEY.
+      HELIXIS_AGENT_API_KEY: ${HELIXIS_AGENT_API_KEY:-}
+      HELIXIS_AGENT_BASE_URL: ${HELIXIS_AGENT_BASE_URL:-}
+      HELIXIS_AGENT_MODEL: ${HELIXIS_AGENT_MODEL:-}
+    volumes:
+      # Policy and the provider profile, both read by the CLI in THIS container
+      # (unlike the sandbox mounts, which the host daemon resolves).
+      - ./policy:/policy:ro
+    restart: "no"
+
+  claw-sync:
+    # Moves data between the host and the sandbox's named volumes. See
+    # docker/claw-sync.sh for why the sandbox cannot bind-mount the host
+    # directly (Landlock + Docker Desktop's `fakeowner` mounts).
+    #
+    # Runs BEFORE claw-init in practice as well as in ordering: the wiki volume
+    # should be populated by the time the agent first reads it, or the spec 01
+    # loop starts against an empty wiki.
+    image: alpine:3.20
+    environment:
+      HELIXIS_SYNC_INTERVAL: ${HELIXIS_SYNC_INTERVAL:-15}
+    volumes:
+      - ./docker/claw-sync.sh:/usr/local/bin/claw-sync.sh:ro
+      # Host side: ordinary bind mounts. They work here because this container
+      # is not a sandbox and carries no Landlock policy.
+      - ./wiki:/host-wiki:ro
+      - ./runs/claw-sessions:/host-sessions
+      # Volume side: the same volumes the sandbox mounts.
+      - claw-wiki:/vol-wiki
+      - claw-sessions:/vol-sessions
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["apk add --no-cache rsync >/dev/null 2>&1 && exec sh /usr/local/bin/claw-sync.sh"]
+    restart: unless-stopped
+
+  claw-forward:
+    # Keeps the Control UI and browser TUI on their existing host ports.
+    #
+    # A Docker-driver sandbox publishes no ports at all — the driver sets
+    # neither exposed_ports nor port_bindings, and the sandbox driver_config
+    # schema accepts only `cdi_devices` and `mounts` with deny_unknown_fields,
+    # so there is no equivalent of the old `18789:18789` mapping. `openshell
+    # forward` is the supported path; this container holds those tunnels and is
+    # itself published by compose, which is what keeps the launch-card URLs in
+    # app/web/lib/claw.ts correct without changing them.
+    #
+    # HONEST COST: the front door is now a tunnel through a supervised sidecar
+    # rather than a kernel port binding. If this service is down the UI is
+    # unreachable even while the agent is perfectly healthy — a worse failure
+    # mode than a compose port mapping, and the price of the agent being inside
+    # the boundary instead of beside it.
+    build:
+      context: .
+      dockerfile: docker/openshell-cli.Dockerfile
+    image: helixis-openshell-cli
+    command: ["/usr/local/bin/claw-forward.sh"]
+    depends_on:
+      claw-init:
+        condition: service_completed_successfully
+    ports:
+      # Loopback-only on the host, exactly as before. The forwards bind 0.0.0.0
+      # INSIDE this container; compose is what confines them to 127.0.0.1.
+      - "127.0.0.1:${NEMOCLAW_UI_PORT:-18789}:18789"
+      - "127.0.0.1:${NEMOCLAW_TUI_PORT:-18790}:18790"
+    environment:
+      OPENSHELL_GATEWAY_ENDPOINT: ${OPENSHELL_GATEWAY_ENDPOINT:-http://openshell:8080}
+      HELIXIS_SANDBOX: ${HELIXIS_SANDBOX:-helixis}
+      NEMOCLAW_UI_PORT: "18789"
+      NEMOCLAW_TUI_PORT: "18790"
+    restart: unless-stopped
+
+  # The `nemoclaw-tui` sidecar used to live here. It ran ttyd in a second
+  # container joined to the gateway's network namespace, which pins the
+  # gateway's *container id*: recreating `nemoclaw` stranded the sidecar in a
+  # dead namespace (its log showed a netlink DELADDR) and `docker compose
+  # restart` could not recover it — only a forced recreate could. ttyd now runs
+  # inside `nemoclaw` itself, so the TUI cannot be orphaned by a gateway
+  # recreate, and the container no longer apt-installs ttyd on every start.
+
+  vllm:
+    profiles: ["gpu"]
+    image: vllm/vllm-openai:latest
+    ports:
+      - "${HELIXIS_VLLM_PORT:-8000}:8000"
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    command:
+      - --model=${HELIXIS_DISTILLER_MODEL:-nvidia/NVIDIA-Nemotron-Nano-9B-v2}
+      - --served-model-name=${HELIXIS_DISTILLER_MODEL:-nvidia/NVIDIA-Nemotron-Nano-9B-v2}
+      # The distiller fires bursts of ~16 concurrent requests; a matching
+      # max-num-seqs is what turns that concurrency into actual batching
+      # throughput rather than a queue.
+      - --max-num-seqs=32
+      - --max-model-len=16384
+      - --gpu-memory-utilization=0.90
+      - --trust-remote-code
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 300s  # first boot downloads weights
+
+volumes:
+  hf-cache:
+  # The sandbox's wiki and session directories. Named volumes rather than host
+  # bind mounts because a Landlock-confined process cannot read a host mount on
+  # Docker Desktop for macOS; `claw-sync` bridges them to ./wiki and
+  # ./runs/claw-sessions. `name:` pins the exact volume name, because
+  # claw-init.sh names it in the sandbox mount spec and compose would otherwise
+  # prefix it with the project name.
+  claw-wiki:
+    name: helixis-wiki
+  claw-sessions:
+    name: helixis-claw-sessions
+
+networks:
+  default:
+
+  # The network the OpenShell Docker driver places sandboxes on. Declared here
+  # so compose creates it BEFORE the gateway starts, which is what lets the
+  # gateway join it and be resolvable as `openshell-gateway` by sandboxes.
+  #
+  # `name:` pins it to exactly what the driver looks for — sandbox_namespace
+  # ("openshell") + "-docker" — instead of compose's project-prefixed default,
+  # and the label matches the one the driver stamps on a network it creates
+  # itself, so the driver adopts this one rather than making a second.
+  #
+  # Left to the driver to create, this network would not exist until the first
+  # `sandbox create`, which is already too late: the gateway would have started
+  # without it and the alias would not resolve.
+  openshell-sandboxes:
+    name: openshell-docker
+    driver: bridge
+    attachable: true
+    labels:
+      openshell.ai/managed-by: openshell
+    ipam:
+      config:
+        # PINNED so the bridge gateway IP is deterministic. On Linux the driver
+        # tells every sandbox to reach the gateway at this network's gateway
+        # address, and the `openshell` service publishes 8080 there — a hardcoded
+        # address on both sides, which only works if Docker cannot pick a
+        # different subnet on the next `network create`.
+        #
+        # Change both together: OPENSHELL_BRIDGE_IP must be this subnet's .1.
+        - subnet: ${OPENSHELL_BRIDGE_SUBNET:-172.19.0.0/16}
+          gateway: ${OPENSHELL_BRIDGE_IP:-172.19.0.1}

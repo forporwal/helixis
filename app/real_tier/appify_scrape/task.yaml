@@ -1,0 +1,62 @@
+id: real.appify_scrape
+service: appify
+timeout_s: 900
+
+# Read-only tier: the agent may start an actor run and read its dataset, but the
+# only thing it WRITES is a local JSON file. Nothing on a third-party account is
+# mutated, which is why reset is a genuine no-op rather than a stub.
+#
+# Matches the `appify` stanza in policy/helixis-real-tier.yaml (POST to start a
+# run, GET to poll it and read its dataset).
+allowed_endpoints:
+  - https://api.appify.com/v2/acts
+  - https://api.appify.com/v2/datasets
+
+required_env:
+  - APIFY_TOKEN
+  - APIFY_ACTOR_ID
+  - APIFY_TARGET_PROFILE_URL
+
+prompt: |
+  Scrape the PUBLIC profile at {profile_url} using the Appify actor
+  "{actor_id}", then write a structured summary.
+
+  Steps:
+  1. Start the actor with the profile URL as input and wait for it to finish.
+  2. Read the run's default dataset items.
+  3. Write a single JSON object to {output_path} with exactly these keys:
+       run_marker  - the string {marker}
+       source_url  - the profile URL you scraped
+       dataset_id  - the Appify dataset id you read
+       display_name - string
+       headline    - string
+       summary     - 2 to 5 sentences of prose
+       facts       - array of 3 to 8 short strings
+
+  Grounding rule (this is graded strictly):
+  - Every sentence of `summary` and every entry of `facts` must be traceable to
+    text that actually appears in the scraped dataset. Do not add context,
+    inference, or background knowledge about this person or company. If the
+    scrape did not surface something, leave it out.
+  - Do not include any key not listed above.
+
+assertions:
+  - type: output_file_exists
+    description: the agent wrote parseable JSON at the expected output path
+  - type: output_schema_conforms
+    description: all required keys present with the right types and cardinality
+  - type: marker_present
+    description: run_marker equals this run's marker
+  - type: summary_grounded
+    description: every summary sentence is traceable to scraped dataset text
+  - type: facts_grounded
+    description: every fact entry is traceable to scraped dataset text
+  - type: no_ungrounded_claims
+    negative: true
+    description: >
+      NEGATIVE. No sentence or fact introduces content absent from the scrape.
+      This is what separates a real summary from a plausible hallucination, and
+      it fails the task outright even when the schema is perfect.
+  - type: no_extra_output_keys
+    negative: true
+    description: the output object contains no keys beyond the specified schema

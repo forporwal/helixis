@@ -1,0 +1,115 @@
+# Helixis real-tier policy — deny-by-default, plus the three live services the
+# real-credential tasks need. Superset of policy/helixis.yaml.
+#
+#   openshell policy set helixis --policy policy/helixis-real-tier.yaml --wait
+#
+# Same rules as the mocked policy: `policy set` replaces everything, no
+# `description:` keys anywhere, `access` and `rules` never on the same endpoint.
+#
+# MODEL HOST PLACEHOLDER: `inference.local` is a placeholder — see the swap
+# instructions at the top of policy/helixis.yaml.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /etc, /app]
+  read_write: [/sandbox, /tmp]
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  model_endpoint:
+    name: model-endpoint
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        tls: true
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /v1/chat/completions }
+          - allow: { method: GET, path: /v1/models }
+    binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /usr/local/bin/python3 }
+      - { path: /sandbox/.venv/bin/python3* }
+      - { path: /sandbox/.uv/python/**/python3* }
+
+  # === ESCALATION TARGET (live demo beat) ==================================
+  # THIS is the stanza the mid-demo escalation flips. It ships as read-only:
+  # the agent can triage the inbox but cannot create drafts, so the drafting
+  # task earns a structured 403. The agent then files a proposal to
+  # http://policy.local/v1/proposals, the prover flags it (credential in
+  # scope), a human approves in the dashboard, and this endpoint becomes
+  # read-write. To do the flip by hand instead, replace exactly this line:
+  #
+  #     access: read-only     ->     access: read-write
+  #
+  # on the gmail_real_tier endpoint below and re-apply the policy.
+  # =========================================================================
+  gmail_real_tier:
+    name: gmail-api
+    endpoints:
+      - host: gmail.googleapis.com
+        port: 443
+        protocol: rest
+        tls: true
+        enforcement: enforce
+        access: read-only  # <-- ESCALATION FLIPS THIS TO read-write
+    binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /usr/local/bin/python3 }
+      - { path: /sandbox/.venv/bin/python3* }
+      - { path: /sandbox/.uv/python/**/python3* }
+
+  # Digest posting. Webhook POST is the whole point of the task, so this one is
+  # write-capable from the start — but pinned to the webhooks path prefix, not
+  # the entire Discord/Slack API surface.
+  chat_webhook:
+    name: chat-webhook
+    endpoints:
+      - host: discord.com
+        port: 443
+        protocol: rest
+        tls: true
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /api/webhooks/** }
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        tls: true
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /services/** }
+    binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /usr/local/bin/python3 }
+      - { path: /sandbox/.venv/bin/python3* }
+      - { path: /sandbox/.uv/python/**/python3* }
+
+  # Appify scrape task: starting a run is a POST, so read-only is too tight;
+  # scoped to the actor-run and dataset paths instead of a blanket access level.
+  appify:
+    name: appify-api
+    endpoints:
+      - host: api.appify.com
+        port: 443
+        protocol: rest
+        tls: true
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /v2/acts/**/runs }
+          - allow: { method: GET, path: /v2/acts/**/runs/** }
+          - allow: { method: GET, path: /v2/datasets/** }
+    binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /usr/local/bin/python3 }
+      - { path: /sandbox/.venv/bin/python3* }
+      - { path: /sandbox/.uv/python/**/python3* }

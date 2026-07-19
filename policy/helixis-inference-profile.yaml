@@ -1,0 +1,46 @@
+# OpenShell provider profile for the agent's inference endpoint.
+#
+# Needed because OpenShell ships profiles for aws-bedrock, deepinfra,
+# google-vertex-ai and nvidia only — none of which is Fireworks, which is where
+# HELIXIS_AGENT_BASE_URL actually points. Without a matching profile there is no
+# way to register the credential with the gateway, and therefore no way to give
+# the sandbox a placeholder instead of the raw key (Req 3.1).
+#
+# Schema copied from `openshell provider profile export deepinfra`, which is the
+# closest shipped shape: one OpenAI-compatible inference host, bearer auth.
+#
+# The placeholder mechanism hangs off `credentials[].name`: the sandbox receives
+# a placeholder token for `api_key`, and the L7 proxy substitutes the real value
+# into the Authorization header on requests to `host` below (Req 3.2). That
+# substitution is scoped to this host — a request anywhere else never carries
+# the credential, which is what makes exfiltration a policy question rather than
+# an honor-system one.
+id: helixis-inference
+display_name: Helixis Inference
+description: The Helixis agent's OpenAI-compatible inference endpoint
+category: inference
+credentials:
+  - name: api_key
+    description: Helixis agent inference API key
+    env_vars:
+      - HELIXIS_AGENT_API_KEY
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    query_param: ''
+endpoints:
+  # TEMPLATED from HELIXIS_AGENT_BASE_URL by docker/claw-init.sh — see the note
+  # in policy/helixis-claw.yaml. `enforce` is what makes the proxy deny rather
+  # than merely log a request to any other host.
+  - host: __MODEL_HOST__
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /usr/bin/curl
+  - /usr/local/bin/curl
+inference_capable: true
+discovery:
+  credentials:
+    - api_key

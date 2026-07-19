@@ -1,0 +1,96 @@
+# Helixis Claw — policy for the AGENT sandbox. Deny-by-default.
+#
+# Applied by docker/claw-init.sh with:
+#   openshell policy set helixis --policy policy/helixis-claw.yaml --wait
+#
+# This is a SEPARATE file from policy/helixis.yaml, which governs the engine
+# tier. They could not be merged: helixis.yaml scopes egress to `python3`,
+# because the engine's task-runner is Python, whereas the agent in this sandbox
+# is OpenClaw running under `node`. Applying helixis.yaml here would deny the
+# agent's own inference calls while appearing to permit them.
+#
+# `policy set` REPLACES the whole policy, so filesystem_policy / landlock /
+# process must all be present here, not just the network stanzas. Every struct
+# is deny_unknown_fields: one stray key (including a `description:`) is a hard
+# parse failure, which is what `--wait` is for — it surfaces at apply time
+# rather than mid-epoch.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  # EVERY BIND MOUNT TARGET MUST BE LISTED EXPLICITLY, and this was the subtlest
+  # thing in the whole spec. Bind-mounting a directory is not sufficient, and
+  # neither is granting its PARENT: Landlock rules attach to a mount, so a
+  # separate mount nested under an allowed path is not covered by the parent's
+  # rule. Measured, on this sandbox:
+  #
+  #   OK   /helixis          <- a real directory in the image
+  #   DENY /helixis/wiki     <- mounted, parent allowed, still denied
+  #
+  # /helixis/bin needs no entry: the startup scripts are baked into the image
+  # (docker/nemoclaw.Dockerfile) rather than mounted, so they are ordinary files
+  # under the already-allowed /helixis.
+  #
+  # The failure mode is quiet and nasty: `stat` and `ls -l` on the mount both
+  # SUCCEED (metadata is unrestricted), so the mount looks healthy, while every
+  # `open` returns EACCES. The spec 01 knowledge loop reads as an empty wiki
+  # rather than as an error. Listing the targets is what makes the mount and the
+  # confinement agree instead of one silently negating the other.
+  read_only: [/usr, /lib, /lib64, /bin, /sbin, /etc, /helixis, /helixis/wiki]
+  # /sandbox is the agent's own state; /sandbox/.openclaw/agents is the spec 03
+  # session-capture bind mount and is listed separately for exactly the reason
+  # above — ingestion sees nothing if the agent cannot write through the mount.
+  #
+  # /dev is here because without it even `bash -lc` fails ("cannot redirect
+  # standard input from /dev/null: Permission denied") and node cannot open
+  # /dev/urandom. It is write-capable because /dev/null is. This is a genuine
+  # widening rather than a formality, so: the sandbox's /dev is the container's
+  # own minimal devtmpfs — Docker exposes null/zero/full/random/urandom/tty and
+  # no host devices — so what it grants is the standard POSIX device set, not
+  # access to host hardware.
+  read_write: [/sandbox, /sandbox/.openclaw/agents, /tmp, /dev]
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  # The agent's inference endpoint — the ONLY sanctioned egress. Everything not
+  # named here is denied at the L7 proxy, which is what makes the containment
+  # rehearsal a real test rather than a narration.
+  #
+  # TEMPLATED — do not hardcode a host here. `__MODEL_HOST__` and
+  # `__MODEL_PATH__` are substituted by docker/claw-init.sh from
+  # HELIXIS_AGENT_BASE_URL, so switching providers stays a one-variable change in
+  # .env. It has to be derived rather than fixed because the path prefix differs
+  # per provider: Fireworks serves /inference/v1/chat/completions where
+  # Featherless and vLLM serve /v1/chat/completions, and a policy naming the
+  # wrong prefix denies every inference call while looking correct.
+  #
+  # This file is applied as a template, never directly; claw-init renders it to
+  # /tmp and applies that. `openshell policy set --policy policy/helixis-claw.yaml`
+  # by hand would send the literal placeholders and fail.
+  model_endpoint:
+    name: model-endpoint
+    endpoints:
+      - host: __MODEL_HOST__
+        port: 443
+        protocol: rest
+        tls: true
+        enforcement: enforce
+        # `rules` and `access` are mutually exclusive on one endpoint; the
+        # explicit method+path pair is tighter than any access preset.
+        rules:
+          - allow: { method: POST, path: __MODEL_PATH__/chat/completions }
+          - allow: { method: GET, path: __MODEL_PATH__/models }
+    # Scoped to the agent's own runtime, so a shell-out to curl or wget cannot
+    # ride the same allowance even when aimed at the permitted host. This is
+    # what the containment rehearsal exercises: curl to a disallowed host is
+    # denied, and so is curl to the ALLOWED host.
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/openclaw }

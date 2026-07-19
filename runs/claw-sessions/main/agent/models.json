@@ -1,0 +1,28 @@
+{
+  "providers": {
+    "helixis": {
+      "baseUrl": "https://api.fireworks.ai/inference/v1",
+      "apiKey": "openshell:resolve:env:v99332683172259949_api_key",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+          "name": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "reasoning": false,
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "api": "openai-completions"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-label="Helixis Claw — an agent that closes three loops on itself">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#010102"/>
+      <stop offset="55%" stop-color="#0f1011"/>
+      <stop offset="100%" stop-color="#05070d"/>
+    </linearGradient>
+    <linearGradient id="sA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#828fff"/><stop offset="100%" stop-color="#5e6ad2"/>
+    </linearGradient>
+    <linearGradient id="sB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4cc26a"/><stop offset="100%" stop-color="#2f8f47"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#828fff" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#828fff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="340" fill="url(#bg)"/>
+  <ellipse cx="150" cy="170" rx="300" ry="220" fill="url(#glow)"/>
+  <rect width="1200" height="340" fill="none" stroke="#23252a" stroke-width="2"/>
+
+  <!-- helix mark -->
+  <g transform="translate(88,110) scale(1.0)" fill="none" stroke-linecap="round" stroke-width="7">
+    <g stroke="#34343a" stroke-width="4.5">
+      <line x1="26" y1="41" x2="70" y2="41"/>
+      <line x1="26" y1="78" x2="70" y2="78"/>
+    </g>
+    <path stroke="url(#sA)" d="M24,6 C24,23 72,23 72,41 C72,59 24,59 24,78 C24,96 72,96 72,114"/>
+    <path stroke="url(#sB)" d="M72,6 C72,23 24,23 24,41 C24,59 72,59 72,78 C72,96 24,96 24,114"/>
+    <g fill="#f7f8f8" stroke="none">
+      <circle cx="24" cy="6" r="4"/><circle cx="72" cy="6" r="4"/>
+      <circle cx="72" cy="114" r="4"/><circle cx="24" cy="114" r="4"/>
+    </g>
+  </g>
+
+  <!-- wordmark -->
+  <text x="248" y="150" font-family="Poppins,-apple-system,system-ui,'Segoe UI',sans-serif"
+        font-size="72" font-weight="600" fill="#f7f8f8" letter-spacing="-1.5">Helixis Claw</text>
+
+  <text x="252" y="196" font-family="Poppins,-apple-system,system-ui,'Segoe UI',sans-serif"
+        font-size="25" font-weight="400" fill="#d0d6e0">An agent that closes three loops on itself.</text>
+
+  <text x="252" y="230" font-family="ui-monospace,'SF Mono','JetBrains Mono',Menlo,monospace"
+        font-size="17" fill="#62666d">It gets measurably better at its job the more it runs — and we can prove it.</text>
+
+  <!-- loop chips -->
+  <g font-family="ui-monospace,'SF Mono','JetBrains Mono',Menlo,monospace" font-size="15">
+    <g>
+      <rect x="252" y="258" width="150" height="34" rx="17" fill="rgba(76,194,106,.10)" stroke="#4cc26a" stroke-width="1.2"/>
+      <text x="272" y="280" fill="#4cc26a">① skills</text>
+    </g>
+    <g>
+      <rect x="414" y="258" width="230" height="34" rx="17" fill="rgba(76,194,106,.10)" stroke="#4cc26a" stroke-width="1.2"/>
+      <text x="434" y="280" fill="#4cc26a">② skills-to-agent</text>
+    </g>
+    <g>
+      <rect x="656" y="258" width="196" height="34" rx="17" fill="rgba(76,194,106,.10)" stroke="#4cc26a" stroke-width="1.2"/>
+      <text x="676" y="280" fill="#4cc26a">③ curriculum</text>
+    </g>
+    <g>
+      <rect x="864" y="258" width="212" height="34" rx="17" fill="rgba(212,167,44,.08)" stroke="#d4a72c" stroke-width="1.2"/>
+      <text x="884" y="280" fill="#d4a72c">⛨ containment</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,86 @@
+# OpenShell gateway — Helixis local stack.
+#
+# Adapted from OpenShell's reference config (deploy/docker/gateway.toml in the
+# upstream OpenShell tree). Two deliberate departures from that reference are
+# called out below; everything else is upstream's defaults.
+
+[openshell]
+version = 1
+
+[openshell.gateway]
+# DEPARTURE 1 — upstream binds 127.0.0.1 because only sandbox containers (which
+# the Docker driver reaches over an auto-added bridge listener) need to call in.
+# Helixis also has the *dashboard container* driving this gateway over the
+# compose network, and loopback would refuse it. The published port is still
+# pinned to 127.0.0.1 in docker-compose.yml, so this listener is reachable from
+# the compose network and from the host — not from the LAN.
+bind_address        = "0.0.0.0:8080"
+health_bind_address = "0.0.0.0:8081"
+log_level           = "info"
+compute_drivers     = ["docker"]
+disable_tls         = true
+
+[openshell.gateway.auth]
+# DEPARTURE 2 — the dashboard's `openshell` CLI is headless, so it cannot do the
+# browser/OIDC dance, and mTLS would mean issuing and mounting a client bundle.
+# Defaults to false upstream; the gateway logs a loud warning when it is on.
+#
+# This is safe ONLY because of what is in front of it: the gateway is published
+# on 127.0.0.1 (never the LAN), the dashboard is itself behind a password, and
+# this whole stack is the single-operator local topology OpenShell calls
+# "single-player mode". A deployment reachable from anywhere else must swap this
+# for OIDC with OPENSHELL_OIDC_CLIENT_SECRET (upstream's documented CI path) or
+# for mTLS.
+allow_unauthenticated_users = true
+
+# Sandbox JWT auth. NOT optional for this stack, despite the surrounding
+# single-player posture: the Docker driver hard-refuses to create a sandbox
+# without it — "docker sandboxes require gateway JWT auth; configure
+# [openshell.gateway.gateway_jwt]" (openshell-driver-docker/src/lib.rs:498).
+# The gateway READS this material and never generates it, so the bundle is
+# produced once by `openshell-gateway generate-certs` into the same
+# /var/lib/openshell bind mount by the `openshell-certs` one-shot compose
+# service, which the gateway depends_on. generate-certs is idempotent in
+# filesystem mode, so a restart never rotates the key out from under a live
+# sandbox.
+#
+# These tokens authenticate the SANDBOX to the gateway; they are unrelated to
+# allow_unauthenticated_users above, which governs USER auth for the CLI.
+[openshell.gateway.gateway_jwt]
+signing_key_path = "/var/lib/openshell/tls/jwt/signing.pem"
+public_key_path  = "/var/lib/openshell/tls/jwt/public.pem"
+kid_path         = "/var/lib/openshell/tls/jwt/kid"
+gateway_id       = "helixis"
+# 0 = non-expiring, which upstream sanctions for exactly this case: "Use that
+# default only for local single-player Docker, Podman, or VM gateways"
+# (docs/reference/gateway-config.mdx:174). A positive TTL would silently break
+# the long-lived agent sandbox when its token aged out mid-epoch.
+ttl_secs         = 0
+
+[openshell.drivers.docker]
+default_image     = "ghcr.io/nvidia/openshell-community/sandboxes/base:latest"
+supervisor_image  = "ghcr.io/nvidia/openshell/supervisor:latest"
+image_pull_policy = "IfNotPresent"
+sandbox_namespace = "openshell"
+# Sandbox callback address. ONLY THE SCHEME AND PORT of this value are used:
+# the driver discards the host and rebuilds the URL as
+# `{scheme}://host.openshell.internal:{port}` (openshell-driver-docker/src/lib.rs
+# :364). Setting a different hostname here changes nothing — verified the hard
+# way, with a sandbox that still received
+# `OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/`.
+#
+# What host.openshell.internal RESOLVES to inside the sandbox is chosen by
+# docker_gateway_route_for_host (lib.rs:2440):
+#
+#   macOS      -> `host-gateway`, routed by Docker Desktop's port forwarder,
+#                 which can see loopback-published ports.
+#   Linux      -> the openshell-docker BRIDGE GATEWAY IP, on the assumption that
+#                 the gateway listens on that IP from the host's side.
+#
+# That Linux assumption is the whole problem for this stack: our gateway is
+# itself a container publishing `127.0.0.1:8080`, so nothing answers on the
+# bridge IP and every sandbox crash-loops with "Policy fetch failed after 5
+# attempts" — which reads as a gateway fault, not a routing one. See the
+# `ports:` block in docker-compose.yml for the fix (an additional publish on the
+# bridge gateway IP), and why it exposes nothing new.
+grpc_endpoint     = "http://host.openshell.internal:8080"
